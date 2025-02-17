@@ -993,6 +993,7 @@ class StatisticsTab(ttk.Frame):
     def calculate_statistics(self):
         db = DatabaseManager()
         try:
+            # Fetch closed trades
             trades = db.execute_query('''
                 SELECT pnl, entry_date, exit_date, entry_price, exit_price,
                        stop_loss, take_profit
@@ -1001,54 +1002,43 @@ class StatisticsTab(ttk.Frame):
             ''')
             
             if not trades:
+                messagebox.showinfo("No Data", "No closed trades found.")
                 return
+                
+            # Convert to pandas DataFrame for easier calculations
+            df = pd.DataFrame(trades, columns=['pnl', 'entry_date', 'exit_date', 
+                                             'entry_price', 'exit_price', 
+                                             'stop_loss', 'take_profit'])
             
-            # Osnovni izračuni
-            pnls = [t[0] for t in trades]
-            profits = [p for p in pnls if p > 0]
-            losses = [abs(l) for l in pnls if l < 0]
-            
-            total_trades = len(trades)
-            winning_trades = len(profits)
-            losing_trades = len(losses)
-            
+            # Basic statistics
+            total_trades = len(df)
+            winning_trades = len(df[df['pnl'] > 0])
+            losing_trades = len(df[df['pnl'] < 0])
             win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
             
-            # Izračuni profita
-            total_pnl = sum(pnls)
-            profit_factor = sum(profits) / sum(losses) if losses and sum(losses) > 0 else float('inf')
+            # Profit statistics
+            total_pnl = df['pnl'].sum()
+            total_profit = df[df['pnl'] > 0]['pnl'].sum()
+            total_loss = abs(df[df['pnl'] < 0]['pnl'].sum())
+            profit_factor = total_profit / total_loss if total_loss != 0 else float('inf')
             
-            avg_win = sum(profits) / len(profits) if profits else 0
-            avg_loss = sum(losses) / len(losses) if losses else 0
+            avg_win = df[df['pnl'] > 0]['pnl'].mean() if winning_trades > 0 else 0
+            avg_loss = df[df['pnl'] < 0]['pnl'].mean() if losing_trades > 0 else 0
+            largest_win = df['pnl'].max()
+            largest_loss = df['pnl'].min()
             
-            largest_win = max(profits) if profits else 0
-            largest_loss = max(losses) if losses else 0
+            # Calculate average hold time
+            df['entry_date'] = pd.to_datetime(df['entry_date'])
+            df['exit_date'] = pd.to_datetime(df['exit_date'])
+            df['hold_time'] = (df['exit_date'] - df['entry_date'])
+            avg_hold_time = df['hold_time'].mean()
             
-            # Izračun prosječnog R:R omjera
-            rr_ratios = []
-            for trade in trades:
-                entry = trade[3]
-                stop = trade[5]
-                take = trade[6]
-                if entry and stop and take:
-                    risk = abs(entry - stop)
-                    reward = abs(take - entry)
-                    if risk > 0:
-                        rr_ratios.append(reward/risk)
+            # Calculate average R:R ratio
+            df['risk'] = abs(df.apply(lambda x: x['entry_price'] - x['stop_loss'], axis=1))
+            df['reward'] = abs(df.apply(lambda x: x['take_profit'] - x['entry_price'], axis=1))
+            avg_rr = (df['reward'] / df['risk']).mean()
             
-            avg_rr = sum(rr_ratios) / len(rr_ratios) if rr_ratios else 0
-            
-            # Izračun prosječnog vremena držanja
-            hold_times = []
-            for trade in trades:
-                entry_date = datetime.strptime(trade[1], "%Y-%m-%d %H:%M:%S")
-                exit_date = datetime.strptime(trade[2], "%Y-%m-%d %H:%M:%S")
-                hold_time = exit_date - entry_date
-                hold_times.append(hold_time.total_seconds())
-            
-            avg_hold_time = timedelta(seconds=sum(hold_times)/len(hold_times)) if hold_times else timedelta()
-            
-            # Ažuriranje labela
+            # Update labels
             self.total_trades_label.config(text=f"Total Trades: {total_trades}")
             self.winning_trades_label.config(text=f"Winning Trades: {winning_trades}")
             self.losing_trades_label.config(text=f"Losing Trades: {losing_trades}")
@@ -1064,224 +1054,242 @@ class StatisticsTab(ttk.Frame):
             self.avg_rr_label.config(text=f"Average R:R Ratio: {avg_rr:.2f}")
             self.avg_hold_time_label.config(text=f"Average Hold Time: {str(avg_hold_time).split('.')[0]}")
             
+            # Save statistics to database
+            self.save_statistics(total_trades, winning_trades, losing_trades, win_rate,
+                               profit_factor, avg_win, avg_loss, largest_win, largest_loss, 
+                               total_pnl)
+            
         except Exception as e:
             logger.error(f"Error calculating statistics: {e}")
             messagebox.showerror("Error", "Failed to calculate statistics.")
         finally:
-            db.close()  
+            db.close()
 
-class TradingApp(ThemedTk):
-    def __init__(self):
-        super().__init__()
+    def save_statistics(self, total_trades, winning_trades, losing_trades, win_rate,
+                       profit_factor, avg_win, avg_loss, largest_win, largest_loss, total_pnl):
+        """Save trading statistics to database"""
+        db = DatabaseManager()
+        try:
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            db.execute_query('''
+                INSERT INTO trading_statistics (
+                    date, total_trades, winning_trades, losing_trades, win_rate,
+                    profit_factor, average_win, average_loss, largest_win,
+                    largest_loss, total_pnl
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (current_date, total_trades, winning_trades, losing_trades, win_rate,
+                  profit_factor, avg_win, avg_loss, largest_win, largest_loss, total_pnl))
+        except Exception as e:
+            logger.error(f"Error saving statistics: {e}")
+        finally:
+            db.close()
+
+class TradingApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Trading Journal & Portfolio Manager")
         
-        # Osnovna konfiguracija prozora
-        self.title("Trading Application Pro")
-        self.geometry("1200x800")
-        self.set_theme("arc")  # Moderni theme
+        # Configure the theme
+        style = ttk.Style()
+        style.theme_use('clam')
         
-        # Inicijalizacija varijabli računa
-        self.account_balance = tk.DoubleVar(value=10000.0)
-        self.risk_percentage = tk.DoubleVar(value=2.0)
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Postavi menu
+        # Create Portfolio Tracker tab
+        self.portfolio_tracker = PortfolioTracker(self.notebook)
+        self.notebook.add(self.portfolio_tracker, text="Portfolio")
+        
+        # Create Position Calculator tab
+        self.position_calculator = PositionCalculator(self.notebook, 
+                                                    portfolio_tracker=self.portfolio_tracker)
+        self.notebook.add(self.position_calculator, text="Calculator")
+        
+        # Create Closed Trades tab
+        self.closed_trades = ClosedTradesTab(self.notebook)
+        self.notebook.add(self.closed_trades, text="History")
+        
+        # Create Statistics tab
+        self.statistics = StatisticsTab(self.notebook)
+        self.notebook.add(self.statistics, text="Statistics")
+        
+        # Configure menu
         self.setup_menu()
         
-        # Postavi glavno sučelje
-        self.setup_main_interface()
-        
-        # Logiranje pokretanja aplikacije
-        logger.info("Trading Application started successfully")
+        # Bind tab change event
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
 
     def setup_menu(self):
-        menubar = tk.Menu(self)
-        self.config(menu=menubar)
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
         
-        # File Menu
+        # File menu
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Settings", command=self.open_settings)
-        file_menu.add_separator()
         file_menu.add_command(label="Export Data", command=self.export_all_data)
+        file_menu.add_command(label="Import Data", command=self.import_data)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.quit)
+        file_menu.add_command(label="Exit", command=self.root.quit)
         
-        # View Menu
-        view_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="View", menu=view_menu)
-        view_menu.add_command(label="Refresh All", command=self.refresh_all)
+        # Settings menu
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        settings_menu.add_command(label="Preferences", command=self.show_preferences)
         
-        # Help Menu
+        # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="Documentation", command=self.show_documentation)
         help_menu.add_command(label="About", command=self.show_about)
 
-    def setup_main_interface(self):
-        # Kreiraj notebook za tabove
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+    def on_tab_change(self, event):
+        """Handle tab change events"""
+        current_tab = self.notebook.select()
+        tab_text = self.notebook.tab(current_tab, "text")
         
-        # Inicijalizacija komponenti
-        self.portfolio_tracker = PortfolioTracker(self.notebook)
-        self.position_calculator = PositionCalculator(
-            self.notebook,
-            self.account_balance.get(),
-            self.risk_percentage.get(),
-            self.portfolio_tracker
-        )
-        self.closed_trades = ClosedTradesTab(self.notebook)
-        self.statistics = StatisticsTab(self.notebook)
-        
-        # Dodaj tabove
-        self.notebook.add(self.position_calculator, text="Position Calculator")
-        self.notebook.add(self.portfolio_tracker, text="Portfolio")
-        self.notebook.add(self.closed_trades, text="Closed Trades")
-        self.notebook.add(self.statistics, text="Statistics")
-        
-        # Status bar
-        self.status_bar = ttk.Label(
-            self, 
-            text=f"Account Balance: ${self.account_balance.get():,.2f}", 
-            relief=tk.SUNKEN, 
-            anchor=tk.W
-        )
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def open_settings(self):
-        settings_window = tk.Toplevel(self)
-        settings_window.title("Settings")
-        settings_window.geometry("300x200")
-        
-        ttk.Label(settings_window, text="Account Balance:").pack(pady=5)
-        balance_entry = ttk.Entry(settings_window)
-        balance_entry.insert(0, str(self.account_balance.get()))
-        balance_entry.pack(pady=5)
-        
-        ttk.Label(settings_window, text="Risk Percentage:").pack(pady=5)
-        risk_entry = ttk.Entry(settings_window)
-        risk_entry.insert(0, str(self.risk_percentage.get()))
-        risk_entry.pack(pady=5)
-        
-        def save_settings():
-            try:
-                new_balance = float(balance_entry.get())
-                new_risk = float(risk_entry.get())
-                
-                if new_balance <= 0:
-                    raise ValueError("Account balance must be greater than 0")
-                if new_risk <= 0 or new_risk > 100:
-                    raise ValueError("Risk percentage must be between 0 and 100")
-                    
-                self.account_balance.set(new_balance)
-                self.risk_percentage.set(new_risk)
-                self.status_bar.config(text=f"Account Balance: ${new_balance:,.2f}")
-                
-                self.position_calculator.risk_manager = RiskManagement(
-                    new_balance, new_risk/100)
-                
-                settings_window.destroy()
-                messagebox.showinfo("Success", "Settings saved successfully!")
-                
-            except ValueError as e:
-                messagebox.showerror("Error", str(e))
-        
-        ttk.Button(settings_window, text="Save", 
-                  command=save_settings).pack(pady=20)
+        if tab_text == "Portfolio":
+            self.portfolio_tracker.refresh()
+        elif tab_text == "History":
+            self.closed_trades.load_closed_trades()
+        elif tab_text == "Statistics":
+            self.statistics.calculate_statistics()
 
     def export_all_data(self):
+        """Export all data to a ZIP file"""
         try:
-            export_dir = filedialog.askdirectory(
-                title="Select Directory to Export Data"
-            )
+            export_dir = filedialog.askdirectory(title="Select Export Directory")
             if not export_dir:
                 return
                 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            zip_filename = f"trading_data_backup_{timestamp}.zip"
+            zip_path = Path(export_dir) / zip_filename
             
-            # Export open positions
-            self.portfolio_tracker.export_data(
-                f"{export_dir}/open_positions_{timestamp}.csv"
-            )
-            
-            # Export closed trades
-            self.closed_trades.export_closed_trades(
-                f"{export_dir}/closed_trades_{timestamp}.csv"
-            )
-            
-            messagebox.showinfo("Success", "All data exported successfully!")
-            
+            db = DatabaseManager()
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                # Export portfolio data
+                portfolio_data = db.execute_query("SELECT * FROM portfolio")
+                self.export_to_csv(portfolio_data, "portfolio.csv", zipf)
+                
+                # Export statistics data
+                stats_data = db.execute_query("SELECT * FROM trading_statistics")
+                self.export_to_csv(stats_data, "statistics.csv", zipf)
+                
+                # Export journal data
+                journal_data = db.execute_query("SELECT * FROM trade_journal")
+                self.export_to_csv(journal_data, "journal.csv", zipf)
+                
+            messagebox.showinfo("Success", f"Data exported successfully to {zip_path}")
         except Exception as e:
-            logger.error(f"Error exporting all data: {e}")
-            messagebox.showerror("Error", "Failed to export data.")
+            logger.error(f"Error exporting data: {e}")
+            messagebox.showerror("Error", "Failed to export data")
 
-    def refresh_all(self):
+    def export_to_csv(self, data, filename, zipf):
+        """Helper method to export data to CSV and add to ZIP file"""
+        with io.StringIO() as f:
+            writer = csv.writer(f)
+            writer.writerows(data)
+            zipf.writestr(filename, f.getvalue())
+
+    def import_data(self):
+        """Import data from backup file"""
         try:
-            self.portfolio_tracker.refresh()
-            self.closed_trades.load_closed_trades()
-            self.statistics.calculate_statistics()
-            messagebox.showinfo("Success", "All data refreshed!")
+            file_path = filedialog.askopenfilename(
+                title="Select Backup File",
+                filetypes=[("ZIP files", "*.zip")]
+            )
+            if not file_path:
+                return
+                
+            if not messagebox.askyesno("Confirm Import", 
+                "This will overwrite existing data. Continue?"):
+                return
+                
+            db = DatabaseManager()
+            with zipfile.ZipFile(file_path, 'r') as zipf:
+                # Import portfolio data
+                with zipf.open('portfolio.csv') as f:
+                    df = pd.read_csv(f)
+                    db.execute_query("DELETE FROM portfolio")
+                    for _, row in df.iterrows():
+                        db.execute_query("""
+                            INSERT INTO portfolio VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, tuple(row))
+                
+                # Import other data similarly...
+                
+            messagebox.showinfo("Success", "Data imported successfully")
+            self.refresh_all()
         except Exception as e:
-            logger.error(f"Error refreshing all data: {e}")
-            messagebox.showerror("Error", "Failed to refresh data.")
+            logger.error(f"Error importing data: {e}")
+            messagebox.showerror("Error", "Failed to import data")
+
+    def show_preferences(self):
+        """Show preferences dialog"""
+        preferences_window = tk.Toplevel(self.root)
+        preferences_window.title("Preferences")
+        preferences_window.geometry("400x300")
+        
+        # Add preferences options here...
+        ttk.Label(preferences_window, 
+                 text="Preferences will be available in future updates").pack(pady=20)
 
     def show_documentation(self):
-        doc_text = """
-        Trading Application Pro Documentation
+        """Show documentation"""
+        docs_window = tk.Toplevel(self.root)
+        docs_window.title("Documentation")
+        docs_window.geometry("600x400")
         
-        1. Position Calculator
-           - Enter symbol and fetch current price
-           - Set stop loss and take profit levels
-           - Calculate position size based on risk
-           
-        2. Portfolio Tracker
-           - View all open positions
-           - Monitor real-time P&L
-           - Close or modify positions
-           
-        3. Closed Trades
-           - View history of all closed trades
-           - Export trade history
-           
-        4. Statistics
-           - Monitor trading performance
-           - View key metrics and ratios
-        """
+        text = tk.Text(docs_window, wrap=tk.WORD, padx=10, pady=10)
+        text.pack(fill=tk.BOTH, expand=True)
         
-        doc_window = tk.Toplevel(self)
-        doc_window.title("Documentation")
-        doc_window.geometry("600x400")
-        
-        text_widget = tk.Text(doc_window, wrap=tk.WORD, padx=10, pady=10)
-        text_widget.insert(tk.END, doc_text)
-        text_widget.config(state=tk.DISABLED)
-        text_widget.pack(fill=tk.BOTH, expand=True)
+        # Add documentation text
+        text.insert(tk.END, """
+Trading Journal & Portfolio Manager Documentation
+
+1. Portfolio Tab
+   - View and manage open positions
+   - Monitor real-time P&L
+   - Close positions
+   - Add notes to trades
+
+2. Calculator Tab
+   - Calculate position sizes
+   - Set stop loss and take profit levels
+   - View risk/reward metrics
+   - Save new trades
+
+3. History Tab
+   - View closed trades
+   - Export trade history
+   - Analyze past performance
+
+4. Statistics Tab
+   - View trading performance metrics
+   - Track win rate and profit factor
+   - Monitor risk management
+        """)
+        text.config(state=tk.DISABLED)
 
     def show_about(self):
-        about_text = """
-        Trading Application Pro
-        Version 1.0.0
-        
-        A professional trading tool for position sizing,
-        portfolio management, and trade analysis.
-        
-        Created by: Garrincha077
-        Last Updated: 2025-02-10
-        """
-        messagebox.showinfo("About", about_text)
+        """Show about dialog"""
+        messagebox.showinfo("About", 
+            "Trading Journal & Portfolio Manager\nVersion 1.0\n\n"
+            "A comprehensive tool for managing your trading portfolio\n"
+            "and tracking trading performance.")
+
+    def refresh_all(self):
+        """Refresh all tabs"""
+        self.portfolio_tracker.refresh()
+        self.closed_trades.load_closed_trades()
+        self.statistics.calculate_statistics()
 
 def main():
-    try:
-        # Provjera i kreiranje direktorija za logove ako ne postoji
-        log_dir = Path("logs")
-        log_dir.mkdir(exist_ok=True)
-        
-        # Konfiguracija logginga
-        logging.basicConfig(
-            filename=log_dir / "trading_app.log",
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        # Inicijalizacija baze podataka
-        db 
+    root = ThemedTk(theme="arc")  # Use a modern theme
+    root.geometry("1200x800")
+    app = TradingApp(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main() 
