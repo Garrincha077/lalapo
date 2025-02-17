@@ -121,57 +121,106 @@ class DatabaseManager:
 class MarketDataManager:
     def __init__(self):
         self.cache = {}
-        self.cache_timeout = 60  # sekunde
-
-    def get_real_time_price(self, symbol):
+        self.cache_timeout = {
+            '1h': 300,  # 5 minutes cache for hourly data
+            '1d': 3600,  # 1 hour cache for daily data
+            '1w': 14400  # 4 hours cache for weekly data
+        }
+        
+    def get_historical_data(self, symbol, period='1y', interval='1d'):
+        """
+        Get historical data for a symbol with specified period and interval
+        
+        Parameters:
+        - symbol: str, the ticker symbol
+        - period: str, the lookback period (e.g., '1d', '5d', '1mo', '1y')
+        - interval: str, the data interval ('1h', '1d', '1w')
+        """
         try:
+            cache_key = f"{symbol}_{period}_{interval}"
             current_time = time.time()
-            if symbol in self.cache:
-                cached_data = self.cache[symbol]
-                if current_time - cached_data['timestamp'] < self.cache_timeout:
-                    return cached_data['price']
-
-            ticker = yf.Ticker(symbol)
-            data = ticker.history(period='1d')
-            if data.empty:
-                return None
             
-            price = float(data['Close'].iloc[-1])
-            self.cache[symbol] = {
-                'price': price,
+            # Check cache
+            if cache_key in self.cache:
+                cached_data = self.cache[cache_key]
+                if current_time - cached_data['timestamp'] < self.cache_timeout.get(interval, 3600):
+                    return cached_data['data']
+            
+            ticker = yf.Ticker(symbol)
+            
+            # Adjust period based on interval to ensure enough data
+            if interval == '1h':
+                # For hourly data, limit to max 60 days of history
+                period = min(period, '60d')
+            elif interval == '1w':
+                # For weekly data, ensure at least 1 year of history
+                period = max(period, '1y')
+            
+            data = ticker.history(period=period, interval=interval)
+            
+            # Cache the data
+            self.cache[cache_key] = {
+                'data': data,
                 'timestamp': current_time
             }
-            return price
-        except Exception as e:
-            logger.error(f"Error fetching price for {symbol}: {e}")
-            return None
-
-    def get_historical_data(self, symbol, period='1y', interval='1d'):
-        try:
-            ticker = yf.Ticker(symbol)
-            data = ticker.history(period=period, interval=interval)
+            
             return data
+            
         except Exception as e:
             logger.error(f"Error fetching historical data for {symbol}: {e}")
             return pd.DataFrame()
 
-    def calculate_atr(self, symbol, period=14):
+    def calculate_atr(self, symbol, timeframe='1d', period=14):
+        """
+        Calculate ATR for different timeframes
+        
+        Parameters:
+        - symbol: str, the ticker symbol
+        - timeframe: str, the timeframe for calculation ('1h', '1d', '1w')
+        - period: int, the ATR period (default: 14)
+        """
         try:
-            data = self.get_historical_data(symbol, period='1mo', interval='1d')
+            # Define lookback periods based on timeframe
+            lookback_periods = {
+                '1h': '7d',    # 7 days for hourly data
+                '1d': '30d',   # 30 days for daily data
+                '1w': '52w'    # 52 weeks for weekly data
+            }
+            
+            period_to_fetch = lookback_periods.get(timeframe, '30d')
+            data = self.get_historical_data(symbol, period=period_to_fetch, interval=timeframe)
+            
             if data.empty:
                 return None
-                
-            # Izračun True Range
+            
+            # Calculate True Range
             data['H-L'] = data['High'] - data['Low']
             data['H-PC'] = abs(data['High'] - data['Close'].shift(1))
             data['L-PC'] = abs(data['Low'] - data['Close'].shift(1))
             
             data['TR'] = data[['H-L', 'H-PC', 'L-PC']].max(axis=1)
-            data['ATR'] = data['TR'].rolling(window=period).mean()
             
-            return data['ATR'].iloc[-1]
+            # Calculate ATR using different methods based on timeframe
+            if timeframe == '1h':
+                # For hourly data, use EMA for more responsiveness
+                data['ATR'] = data['TR'].ewm(span=period, adjust=False).mean()
+            else:
+                # For daily and weekly, use simple moving average
+                data['ATR'] = data['TR'].rolling(window=period).mean()
+            
+            # Additional statistics
+            atr_stats = {
+                'current': data['ATR'].iloc[-1],
+                'mean': data['ATR'].mean(),
+                'max': data['ATR'].max(),
+                'min': data['ATR'].min(),
+                'stddev': data['ATR'].std()
+            }
+            
+            return atr_stats
+            
         except Exception as e:
-            logger.error(f"Error calculating ATR for {symbol}: {e}")
+            logger.error(f"Error calculating ATR for {symbol} on {timeframe} timeframe: {e}")
             return None
 
 class RiskManagement:
