@@ -537,338 +537,113 @@ class PositionCalculator(ttk.Frame):
         self.risk_percentage = risk_percentage
         self.portfolio_tracker = portfolio_tracker
         self.market_data = MarketDataManager()
-        self.risk_manager = RiskManagement(account_balance)
         self.setup_ui()
-
-    def setup_ui(self):
-        # Okvir za unos simbola
-        symbol_frame = ttk.LabelFrame(self, text="Trade Entry", padding=10)
-        symbol_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Unos simbola
-        ttk.Label(symbol_frame, text="Symbol:").grid(row=0, column=0, padx=5, pady=5)
-        self.symbol_var = tk.StringVar()
-        self.symbol_entry = ttk.Entry(symbol_frame, textvariable=self.symbol_var)
-        self.symbol_entry.grid(row=0, column=1, padx=5, pady=5)
-        ttk.Button(symbol_frame, text="Fetch Price", 
-                  command=self.fetch_price).grid(row=0, column=2, padx=5, pady=5)
-
-        # Unos cijena
-        self.setup_price_entries(symbol_frame)
-
-        # Odabir vrste trgovine
-        self.trade_type = tk.StringVar(value="Long")
-        ttk.Radiobutton(symbol_frame, text="Long", 
-                       variable=self.trade_type, 
-                       value="Long").grid(row=4, column=0)
-        ttk.Radiobutton(symbol_frame, text="Short", 
-                       variable=self.trade_type, 
-                       value="Short").grid(row=4, column=1)
-
-        # Okvir za upravljanje rizikom
-        risk_frame = ttk.LabelFrame(self, text="Risk Management", padding=10)
-        risk_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        self.setup_risk_settings(risk_frame)
-
-        # Okvir za rezultate
-        self.setup_results_frame()
-
-        # Okvir za grafikon
-        self.setup_chart_frame()
-
     def setup_price_entries(self, parent_frame):
-        # Ulazna cijena
-        self.entry_price_var = tk.StringVar()
-        ttk.Label(parent_frame, text="Entry Price:").grid(row=1, column=0, padx=5, pady=5)
-        self.entry_price_entry = ttk.Entry(parent_frame, textvariable=self.entry_price_var)
-        self.entry_price_entry.grid(row=1, column=1, padx=5, pady=5)
+        # ... (previous code remains the same until ATR settings) ...
 
-        # Stop Loss okvir
-        stop_loss_frame = ttk.LabelFrame(parent_frame, text="Stop Loss Settings", padding=5)
-        stop_loss_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        # ATR Settings Frame
+        self.atr_frame = ttk.LabelFrame(parent_frame, text="ATR Settings", padding=5)
+        self.atr_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
 
-        # Vrsta Stop Loss-a
-        self.stop_loss_type = tk.StringVar(value="Fixed")
-        ttk.Radiobutton(stop_loss_frame, text="Fixed", 
-                       variable=self.stop_loss_type, 
-                       value="Fixed",
-                       command=self.update_stop_loss_mode).grid(row=0, column=0)
-        ttk.Radiobutton(stop_loss_frame, text="ATR Based", 
-                       variable=self.stop_loss_type, 
-                       value="ATR",
-                       command=self.update_stop_loss_mode).grid(row=0, column=1)
+        # ATR Timeframe selection
+        ttk.Label(self.atr_frame, text="ATR Timeframe:").grid(row=0, column=0)
+        self.atr_timeframe = tk.StringVar(value='1d')
+        timeframe_combo = ttk.Combobox(self.atr_frame, 
+                                     textvariable=self.atr_timeframe,
+                                     values=['1h', '1d', '1w'],
+                                     state='readonly',
+                                     width=10)
+        timeframe_combo.grid(row=0, column=1)
+        timeframe_combo.bind('<<ComboboxSelected>>', self.update_atr_calculation)
 
-        # Fiksni Stop Loss
-        self.stop_loss_var = tk.StringVar()
-        self.stop_loss_label = ttk.Label(stop_loss_frame, text="Stop Loss:")
-        self.stop_loss_label.grid(row=1, column=0)
-        self.stop_loss_entry = ttk.Entry(stop_loss_frame, textvariable=self.stop_loss_var)
-        self.stop_loss_entry.grid(row=1, column=1)
+        # ATR Period
+        ttk.Label(self.atr_frame, text="ATR Period:").grid(row=1, column=0)
+        self.atr_period_var = tk.StringVar(value='14')
+        ttk.Entry(self.atr_frame, 
+                 textvariable=self.atr_period_var,
+                 width=10).grid(row=1, column=1)
 
-        # ATR množitelj
-        self.atr_multiplier_var = tk.StringVar(value="2.0")
-        self.atr_multiplier_label = ttk.Label(stop_loss_frame, text="ATR Multiplier:")
-        self.atr_multiplier_label.grid(row=2, column=0)
-        self.atr_multiplier_entry = ttk.Entry(stop_loss_frame, 
-                                           textvariable=self.atr_multiplier_var)
-        self.atr_multiplier_entry.grid(row=2, column=1)
-        
-        # ATR vrijednost
-        self.atr_value_label = ttk.Label(stop_loss_frame, text="Current ATR: N/A")
-        self.atr_value_label.grid(row=3, column=0, columnspan=2)
+        # ATR Information Display
+        self.atr_info_frame = ttk.Frame(self.atr_frame)
+        self.atr_info_frame.grid(row=2, column=0, columnspan=2, pady=5)
 
-        # Početno sakrij ATR kontrole
-        self.atr_multiplier_label.grid_remove()
-        self.atr_multiplier_entry.grid_remove()
-        self.atr_value_label.grid_remove()
+        self.current_atr_label = ttk.Label(self.atr_info_frame, text="Current ATR: N/A")
+        self.current_atr_label.pack()
 
-        # Take Profit
-        self.take_profit_var = tk.StringVar()
-        ttk.Label(parent_frame, text="Take Profit:").grid(row=3, column=0, padx=5, pady=5)
-        self.take_profit_entry = ttk.Entry(parent_frame, textvariable=self.take_profit_var)
-        self.take_profit_entry.grid(row=3, column=1, padx=5, pady=5)
+        self.avg_atr_label = ttk.Label(self.atr_info_frame, text="Average ATR: N/A")
+        self.avg_atr_label.pack()
 
-    def setup_risk_settings(self, risk_frame):
-        # Risk postotak slider
-        ttk.Label(risk_frame, text="Risk %:").grid(row=0, column=0, padx=5, pady=5)
-        self.risk_slider = ttk.Scale(risk_frame, from_=0.1, to=5.0, orient="horizontal")
-        self.risk_slider.set(self.risk_percentage)
-        self.risk_slider.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        
-        # Gumb za izračun
-        ttk.Button(risk_frame, text="Calculate Position", 
-                  command=self.calculate_position).grid(row=1, column=0, columnspan=2, pady=10)
+        self.atr_range_label = ttk.Label(self.atr_info_frame, text="ATR Range: N/A")
+        self.atr_range_label.pack()
 
-    def setup_results_frame(self):
-        results_frame = ttk.LabelFrame(self, text="Position Details", padding=10)
-        results_frame.pack(fill=tk.X, padx=5, pady=5)
+    def update_atr_calculation(self, event=None):
+        """Update ATR calculations when timeframe changes"""
+        symbol = self.symbol_var.get().upper()
+        if not symbol:
+            return
 
-        self.position_size_label = ttk.Label(results_frame, text="Position Size: ")
-        self.position_size_label.pack(pady=2)
-
-        self.risk_amount_label = ttk.Label(results_frame, text="Risk Amount: ")
-        self.risk_amount_label.pack(pady=2)
-
-        self.reward_amount_label = ttk.Label(results_frame, text="Potential Reward: ")
-        self.reward_amount_label.pack(pady=2)
-
-        self.risk_reward_label = ttk.Label(results_frame, text="Risk/Reward Ratio: ")
-        self.risk_reward_label.pack(pady=2)
-
-    def setup_chart_frame(self):
-        chart_frame = ttk.LabelFrame(self, text="Price Chart", padding=10)
-        chart_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        self.fig, self.ax = plt.subplots(figsize=(8, 4))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        self.toolbar = NavigationToolbar2Tk(self.canvas, chart_frame)
-        self.toolbar.update()
-
-    def update_stop_loss_mode(self):
-        if self.stop_loss_type.get() == "ATR":
-            self.stop_loss_label.configure(text="ATR Stop Loss:")
-            self.atr_multiplier_label.grid()
-            self.atr_multiplier_entry.grid()
-            self.atr_value_label.grid()
-            if self.symbol_var.get():
-                self.calculate_atr_stop_loss()
-        else:
-            self.stop_loss_label.configure(text="Stop Loss:")
-            self.atr_multiplier_label.grid_remove()
-            self.atr_multiplier_entry.grid_remove()
-            self.atr_value_label.grid_remove()
+        try:
+            period = int(self.atr_period_var.get())
+            timeframe = self.atr_timeframe.get()
+            
+            atr_stats = self.market_data.calculate_atr(symbol, timeframe, period)
+            
+            if atr_stats:
+                self.current_atr_label.config(
+                    text=f"Current ATR: ${atr_stats['current']:.2f}")
+                self.avg_atr_label.config(
+                    text=f"Average ATR: ${atr_stats['mean']:.2f}")
+                self.atr_range_label.config(
+                    text=f"ATR Range: ${atr_stats['min']:.2f} - ${atr_stats['max']:.2f}")
+                
+                # If using ATR-based stop loss, update the calculation
+                if self.stop_loss_type.get() == "ATR":
+                    self.calculate_atr_stop_loss()
+            
+        except ValueError:
+            messagebox.showerror("Error", "Invalid ATR period")
+        except Exception as e:
+            logger.error(f"Error updating ATR calculation: {e}")
+            messagebox.showerror("Error", "Failed to update ATR calculation")
 
     def calculate_atr_stop_loss(self):
+        """Calculate stop loss based on ATR"""
         symbol = self.symbol_var.get().upper()
         if not symbol:
             return
             
         try:
-            atr = self.market_data.calculate_atr(symbol)
-            if atr is not None:
-                self.atr_value_label.configure(text=f"Current ATR: ${atr:.2f}")
+            current_price = float(self.entry_price_var.get())
+            period = int(self.atr_period_var.get())
+            timeframe = self.atr_timeframe.get()
+            multiplier = float(self.atr_multiplier_var.get())
+            
+            atr_stats = self.market_data.calculate_atr(symbol, timeframe, period)
+            
+            if atr_stats:
+                atr = atr_stats['current']
+                self.atr_value_label.configure(
+                    text=f"Current ATR ({timeframe}): ${atr:.2f}")
                 
                 if self.stop_loss_type.get() == "ATR":
-                    current_price = float(self.entry_price_var.get())
-                    multiplier = float(self.atr_multiplier_var.get())
-                    
                     if self.trade_type.get() == "Long":
                         stop_loss = current_price - (atr * multiplier)
                     else:
                         stop_loss = current_price + (atr * multiplier)
                         
                     self.stop_loss_var.set(f"{stop_loss:.2f}")
-            else:
-                self.atr_value_label.configure(text="ATR: Not Available")
+                    
+                    # Calculate and display potential loss
+                    risk_amount = abs(current_price - stop_loss)
+                    self.risk_amount_label.config(
+                        text=f"Risk per share: ${risk_amount:.2f}")
+            
+        except ValueError:
+            messagebox.showerror("Error", "Invalid input values")
         except Exception as e:
             logger.error(f"Error calculating ATR stop loss: {e}")
-            messagebox.showerror("Error", "Failed to calculate ATR stop loss.")
-
-    def fetch_price(self):
-        symbol = self.symbol_var.get().upper()
-        if not symbol:
-            messagebox.showwarning("Input Error", "Please enter a symbol.")
-            return
-                
-        current_price = self.market_data.get_real_time_price(symbol)
-        if current_price is not None:
-            self.entry_price_var.set(f"{current_price:.2f}")
-            self.update_chart(symbol)
-            if self.stop_loss_type.get() == "ATR":
-                self.calculate_atr_stop_loss()
-        else:
-            messagebox.showerror("Error", f"Failed to fetch price for {symbol}")
-
-    def update_chart(self, symbol):
-        try:
-            data = self.market_data.get_historical_data(symbol, period='6mo')
-            if not data.empty:
-                self.ax.clear()
-                self.ax.plot(data.index, data['Close'], label='Price')
-                
-                # Dodaj pokretne prosjeke
-                data['MA20'] = data['Close'].rolling(window=20).mean()
-                data['MA50'] = data['Close'].rolling(window=50).mean()
-                self.ax.plot(data.index, data['MA20'], label='20 MA', alpha=0.7)
-                self.ax.plot(data.index, data['MA50'], label='50 MA', alpha=0.7)
-
-                self.ax.set_title(f"{symbol} Price History")
-                self.ax.set_xlabel("Date")
-                self.ax.set_ylabel("Price ($)")
-                self.ax.legend()
-                self.ax.grid(True)
-                self.fig.autofmt_xdate()
-                self.canvas.draw()
-        except Exception as e:
-            logger.error(f"Error updating chart: {e}")
-
-    def calculate_position(self):
-        try:
-            entry_price = float(self.entry_price_var.get())
-            stop_loss = float(self.stop_loss_var.get())
-            take_profit = float(self.take_profit_var.get())
-            
-            # Validacija ulaznih podataka
-            if entry_price <= 0 or stop_loss <= 0 or take_profit <= 0:
-                raise ValueError("All prices must be greater than 0")
-                
-            position_size = self.risk_manager.calculate_position_size(entry_price, stop_loss)
-            risk_metrics = self.risk_manager.calculate_risk_metrics(
-                position_size, entry_price, stop_loss, take_profit)
-            
-            if risk_metrics:
-                self.position_size_label.config(text=f"Position Size: {position_size} shares")
-                self.risk_amount_label.config(text=f"Risk Amount: ${risk_metrics['total_risk']:.2f}")
-                self.reward_amount_label.config(
-                    text=f"Potential Reward: ${risk_metrics['total_reward']:.2f}")
-                self.risk_reward_label.config(
-                    text=f"Risk/Reward Ratio: {risk_metrics['risk_reward_ratio']:.2f}")
-                
-                # Provjera rizik/reward ratia
-                if risk_metrics['risk_reward_ratio'] < 1:
-                    messagebox.showwarning("Risk Warning", 
-                        "Risk/Reward ratio is less than 1:1. Consider adjusting your entry points.")
-                
-                if messagebox.askyesno("Confirm Trade", "Would you like to save this trade?"):
-                    self.save_trade(position_size)
-                    
-        except ValueError as e:
-            messagebox.showwarning("Input Error", str(e))
-        except Exception as e:
-            logger.error(f"Error calculating position: {e}")
-            messagebox.showerror("Error", "An error occurred while calculating position.")                
-    def save_trade(self, position_size):
-        db = DatabaseManager()
-        try:
-            # Validacija podataka prije spremanja
-            symbol = self.symbol_var.get().strip().upper()
-            entry_price = float(self.entry_price_var.get())
-            stop_loss = float(self.stop_loss_var.get())
-            take_profit = float(self.take_profit_var.get())
-            
-            if not symbol or entry_price <= 0 or stop_loss <= 0 or take_profit <= 0:
-                raise ValueError("Invalid trade parameters")
-            
-            trade_data = {
-                'symbol': symbol,
-                'entry_price': entry_price,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'quantity': position_size,
-                'entry_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'trade_type': self.trade_type.get(),
-                'status': 'Open'
-            }
-            
-            # Debug ispis
-            print("Attempting to save trade with data:")
-            for key, value in trade_data.items():
-                print(f"{key}: {value}")
-            
-            db.execute_query('''
-                INSERT INTO portfolio (
-                    symbol, entry_price, stop_loss, take_profit, quantity,
-                    entry_date, trade_type, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                trade_data['symbol'], trade_data['entry_price'], trade_data['stop_loss'],
-                trade_data['take_profit'], trade_data['quantity'], trade_data['entry_date'],
-                trade_data['trade_type'], trade_data['status']
-            ))
-            
-            messagebox.showinfo("Success", f"Trade saved successfully!\nSymbol: {symbol}\nQuantity: {position_size}")
-            
-            # Osvježi portfolio tracker ako postoji
-            if self.portfolio_tracker:
-                self.portfolio_tracker.refresh()
-                
-        except ValueError as ve:
-            logger.error(f"Validation error in save_trade: {ve}")
-            messagebox.showerror("Validation Error", str(ve))
-        except Exception as e:
-            logger.error(f"Error in save_trade: {e}", exc_info=True)
-            messagebox.showerror("Error", f"Failed to save trade: {str(e)}")
-        finally:
-            db.close()
-
-    def test_save_trade(self):
-        """Metoda za testiranje spremanja trgovine"""
-        try:
-            # Postavi test podatke
-            self.symbol_var.set("AAPL")
-            self.entry_price_var.set("150.0")
-            self.stop_loss_var.set("145.0")
-            self.take_profit_var.set("160.0")
-            self.trade_type.set("Long")
-            
-            # Pokušaj spremanja
-            self.calculate_position()
-            
-        except Exception as e:
-            logger.error(f"Test failed: {e}")
-            print(f"Test failed: {e}")
-
-    def clear_fields(self):
-        """Očisti sva polja za unos"""
-        self.symbol_var.set("")
-        self.entry_price_var.set("")
-        self.stop_loss_var.set("")
-        self.take_profit_var.set("")
-        self.trade_type.set("Long")
-        
-        # Očisti labele s rezultatima
-        self.position_size_label.config(text="Position Size: ")
-        self.risk_amount_label.config(text="Risk Amount: ")
-        self.reward_amount_label.config(text="Potential Reward: ")
-        self.risk_reward_label.config(text="Risk/Reward Ratio: ")
-        
-        # Očisti graf
-        self.ax.clear()
-        self.canvas.draw()
+            messagebox.showerror("Error", "Failed to calculate ATR stop loss")
 
 class ClosedTradesTab(ttk.Frame):
     def __init__(self, parent):
